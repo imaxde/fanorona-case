@@ -1,16 +1,38 @@
-package org.example
+package fanorona
 
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
-fun main() {
-    val name = "Kotlin"
-    //TIP Press <shortcut actionId="ShowIntentionActions"/> with your caret at the highlighted text
-    // to see how IntelliJ IDEA suggests fixing it.
-    println("Hello, " + name + "!")
+import fanorona.repositories.InMemoryGameRepository
+import fanorona.repositories.InMemoryPlayerRepository
+import fanorona.services.ActionService
+import fanorona.services.GameService
+import fanorona.services.ReplayService
+import fanorona.services.StatisticsService
+import fanorona.setup.ClassicFanoronaFactory
+import fanorona.setup.GameSetupFactory
+import fanorona.ui.ConsoleApplication
+import java.io.InputStream
+import java.io.PrintStream
 
-    for (i in 1..5) {
-        //TIP Press <shortcut actionId="Debug"/> to start debugging your code. We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-        // for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.
-        println("i = $i")
-    }
+fun main() = runConsole(ClassicFanoronaFactory(), System.`in`, System.out)
+
+fun runConsole(
+    factory: GameSetupFactory,
+    input: InputStream,
+    output: PrintStream,
+) {
+    val players = InMemoryPlayerRepository()
+    val games = InMemoryGameRepository()
+    val gameService = GameService(
+        players,
+        games,
+        ActionService(factory.createBoard(), factory.createActionRules()),
+        factory,
+    )
+    ConsoleApplication(
+        gameService,
+        StatisticsService(players, games),
+        ReplayService(games, factory),
+        factory,
+        input,
+        output,
+    ).run()
 }

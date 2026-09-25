@@ -1,6 +1,6 @@
 # FanoronaCase
 
-Десктопное приложение для администрирования партий в Фанорону: проверка и запись ходов, промежуточные результаты, история игр и статистика игроков.
+Консольное приложение для игры в Фанорону: проверка и запись ходов, история завершённых партий, повтор и статистика игроков.
 
 ## Требования
 
@@ -69,7 +69,8 @@
 
 ```mermaid
 flowchart TB
-    subgraph UI["1 · UI - экраны (без бизнес-логики)"]
+    subgraph UI["1 · Консольный интерфейс"]
+        Console[ConsoleApplication]
         Start[StartScreen]
         Play["GameScreen<br/>(подписан на события GameListener)"]
         Stats[StatisticsScreen]
@@ -95,17 +96,20 @@ flowchart TB
         GR[GameRepository]
     end
 
-    subgraph INFRA["5 · Хранение - реализации"]
-        Mem["InMemory…Repository<br/>(сейчас)"]
-        Db["Db…Repository<br/>(этап с БД)"]
+    subgraph INFRA["5 · Хранение в памяти"]
+        Mem[InMemory…Repository]
     end
 
-    Start --> Inv
-    Play --> Inv
+    Console --> Start
+    Console --> Play
+    Console --> Stats
+    Console --> Replay
+    Start --> GS
+    Play --> GS
     Stats --> SS
     Stats -- открывает --> Replay
     Replay --> RS
-    Inv --> GS
+    Inv -. оборачивает при проверке инвариантов .-> GS
 
     GS --> AS
     GS --> Factory
@@ -120,11 +124,10 @@ flowchart TB
     GS --> GR
     RS --> GR
     SS --> GR
+    SS --> PR
 
     PR -. реализация .- Mem
     GR -. реализация .- Mem
-    PR -. реализация .- Db
-    GR -. реализация .- Db
 ```
 
 ### Предметная модель
@@ -214,12 +217,12 @@ classDiagram
 
     Game "0..*" -- "1" Player : за белых
     Game "0..*" -- "1" Player : за чёрных
-    Game "0..1" -- "0..1" Arrangement
+    Game "1" -- "2" Arrangement : начальная и текущая
     Arrangement "0..1" -- "0..44" Stone
     Point "0..1" -- "0..1" Stone : стоит на
     Board "1" -- "45" Point
     Point "3..8" -- "3..8" Point : /соседи
-    Game "1" -- "1..*" Move : ходы
+    Game "1" -- "0..*" Move : завершённые ходы
     Game "0..1" -- "0..1" Move : /текущий
     Move "1" -- "0..*" Action : действия
     Action "0..*" -- "1" Stone : камень
@@ -257,6 +260,7 @@ classDiagram
             +endMove()
             +availableActions() List~Action~
             +currentGame() Game?
+            +cancelGame()
             +addListener(listener: GameListener)
         }
         class GameService
@@ -281,6 +285,8 @@ classDiagram
             +currentArrangement() Arrangement
         }
         class StatisticsService {
+            +players() List~Player~
+            +findPlayer(name: String) Player?
             +statisticsFor(player: Player) PlayerStatistics
             +gamesOf(player: Player) List~Game~
         }
@@ -317,11 +323,13 @@ classDiagram
             +check(action: Action, game: Game, board: Board) Violation?
         }
         class AlongLineToFreeNeighborRule
+        class OwnStoneRule
         class SameStoneInSeriesRule
         class NoRevisitRule
         class NoRepeatDirectionRule
         class MandatoryCaptureRule
         class SinglePaikaRule
+        class CaptureRemovesStoneRule
         class DrawRule {
             <<interface>>
             +isDraw(game: Game) Boolean
@@ -357,6 +365,9 @@ classDiagram
             +id: Long
             +date: LocalDate
             +outcome: Outcome?
+            +initialArrangement: Arrangement
+            +arrangement: Arrangement
+            +finishMove()
             +currentMove() Move?
             +startNextMove()
             +updateOutcome()
@@ -452,6 +463,7 @@ classDiagram
     ReplayService ..> GameRepository
     ReplayService ..> GameSetupFactory
     StatisticsService ..> GameRepository
+    StatisticsService ..> PlayerRepository
     StatisticsService ..> PlayerStatistics
 
     %% Repositories
@@ -460,11 +472,13 @@ classDiagram
 
     %% Strategy
     ActionRule <|.. AlongLineToFreeNeighborRule
+    ActionRule <|.. OwnStoneRule
     ActionRule <|.. SameStoneInSeriesRule
     ActionRule <|.. NoRevisitRule
     ActionRule <|.. NoRepeatDirectionRule
     ActionRule <|.. MandatoryCaptureRule
     ActionRule <|.. SinglePaikaRule
+    ActionRule <|.. CaptureRemovesStoneRule
     DrawRule <|.. NoCaptureLimitRule
     DrawRule <|.. RepetitionRule
     ActionRule ..> Violation
@@ -476,8 +490,8 @@ classDiagram
     %% Domain
     Game "0..*" --> "1" Player : white
     Game "0..*" --> "1" Player : black
-    Game "0..1" --> "0..1" Arrangement
-    Game "1" *-- "1..*" Move : moves
+    Game "1" *-- "0..*" Move : completed moves
+    Game "1" *-- "2" Arrangement : initial and current
     Game o-- "1..*" DrawRule : drawRules
     Board "1" *-- "45" Point
     Arrangement "0..1" --> "0..44" Stone
@@ -492,10 +506,35 @@ classDiagram
 
 ## Запуск
 
-Требуется JDK 24; Gradle скачивается через wrapper.
+Требуется JDK 24; Gradle скачивается через wrapper. Точка входа — `src/main/kotlin/Main.kt`.
 
 ```bash
-./gradlew build   # компиляция и тесты
+./gradlew run                 # интерактивная игра
+./gradlew build               # сборка, тесты и проверка покрытия методов
+./gradlew jacocoTestReport    # отчёт о покрытии в build/reports/jacoco/test/html/
 ```
 
-Точка входа - `src/main/kotlin/Main.kt`.
+После запуска введите `help` для списка команд. Координаты — `x,y`, где `x` от 0 до 8, `y` от 0 до 4. Имена с пробелами заключайте в кавычки.
+
+```text
+start "Анна Иванова" Борис
+board
+actions
+move approach 3,2 4,2
+status
+players
+stats "Анна Иванова"
+history "Анна Иванова"
+quit
+```
+
+`start` назначает первого игрока белыми, второго — чёрными. Команда `actions` показывает допустимые действия в текущей позиции; `move` принимает `paika` (простое перемещение), `approach` (атака) или `withdrawal` (отступление). Если после захвата доступно продолжение серии, можно сделать следующее действие либо закончить ход командой `end`; после пайки ход заканчивается автоматически. `cancel` отменяет незавершённую партию. Завершённую партию можно найти через `history <имя>` и воспроизвести командами `replay <id>`, `next`, `back`.
+
+## Архитектурные решения
+
+- Игрок создаётся при `GameService.startGame`: имя очищается от пробелов по краям и повторяющихся пробелов, поиск выполняется без учёта регистра. Уже известный игрок используется повторно. Это соответствует жизненному циклу игрока в приложении: отдельной операции регистрации нет, а имена считаются уникальными.
+- `Game` хранит копию начальной расстановки вместе с текущей. Поэтому `ReplayService` воспроизводит и обычные, и заданные через `PositionFactory` стартовые позиции.
+- `OwnStoneRule` и `CaptureRemovesStoneRule` явно проверяют принадлежность камня текущей стороне и фактическое снятие камней захватом. Это делает проверку действий полной до изменения расстановки.
+- `StatisticsService` использует оба репозитория: игроков — для поиска и согласования имени, партий — для истории и статистики. В `IGameService` добавлена отмена незавершённой партии; отменённые партии в историю не попадают.
+
+Репозитории хранят данные только в памяти текущего запуска. База данных и графический интерфейс в этой версии отсутствуют.
