@@ -1,8 +1,7 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  push: {}
   pull_request:
   workflow_dispatch:
 
@@ -31,5 +30,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
+      - name: Install virtual display
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+
       - name: Build and run tests
-        run: ./gradlew build --no-daemon
+        run: xvfb-run -a ./gradlew build --no-daemon

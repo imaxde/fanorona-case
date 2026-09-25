@@ -88,7 +88,7 @@ class ConsoleSystemTest {
             System.setIn(ByteArrayInputStream("help\nquit\n".toByteArray(StandardCharsets.UTF_8)))
             System.setOut(PrintStream(bytes, true, StandardCharsets.UTF_8))
 
-            main()
+            main(arrayOf("--console"))
 
             assertContains(bytes.toString(StandardCharsets.UTF_8), "start <белые> <чёрные>")
         } finally {

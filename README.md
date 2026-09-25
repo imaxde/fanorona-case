@@ -1,6 +1,8 @@
 # FanoronaCase
 
-Консольное приложение для игры в Фанорону: проверка и запись ходов, история завершённых партий, повтор и статистика игроков.
+Настольная игра в Фанорону на Kotlin/JVM с графическим интерфейсом Swing. Приложение проверяет ходы, ведёт реестр игроков, показывает локальную статистику и позволяет повторять завершённые партии. Консольный режим также доступен.
+
+В GUI можно выбрать камень и соседнюю точку мышью. Доступные камни и цели подсвечиваются; если возможны и атака, и отступление, приложение предлагает выбрать вид захвата. Имена игроков, история и статистика существуют в памяти текущего запуска.
 
 ## Требования
 
@@ -69,36 +71,53 @@
 
 ```mermaid
 flowchart TB
-    subgraph UI["1 · Консольный интерфейс"]
+    subgraph GUI["1 · Swing · представление и обработка действий"]
+        Window[SwingApplication]
+        Tabs["GameTab, PlayersTab, ReplayTab"]
+        BoardPanel[BoardPanel]
+        Presenter[DesktopController]
+    end
+
+    subgraph UI["2 · Консольный интерфейс"]
         Console[ConsoleApplication]
         Start[StartScreen]
-        Play["GameScreen<br/>(подписан на события GameListener)"]
+        Play[GameScreen]
         Stats[StatisticsScreen]
         Replay[ReplayScreen]
     end
 
-    subgraph APP["2 · Сервисы - прикладная логика"]
+    subgraph APP["3 · Прикладные сервисы"]
         Inv["InvariantCheckingGameService<br/>(Decorator, в тестах/отладке)"]
         GS[GameService]
         AS[ActionService]
         RS[ReplayService]
         SS[StatisticsService]
+        Registry[PlayerRegistryService]
     end
 
-    subgraph DOM["3 · Предметная модель"]
+    subgraph DOM["4 · Предметная модель"]
         Factory["GameSetupFactory<br/>(Factory)"]
         Game["Game, Move, Action…<br/>Board, Point, Arrangement, Stone"]
         Rules["ActionRule, DrawRule<br/>(Strategy)"]
     end
 
-    subgraph REPO["4 · Репозитории - интерфейсы"]
+    subgraph REPO["5 · Интерфейсы репозиториев"]
         PR[PlayerRepository]
         GR[GameRepository]
     end
 
-    subgraph INFRA["5 · Хранение в памяти"]
+    subgraph INFRA["6 · Хранение в памяти"]
         Mem[InMemory…Repository]
     end
+
+    Window --> Tabs
+    Tabs --> BoardPanel
+    Window --> Presenter
+    Presenter --> GS
+    Presenter --> Registry
+    Presenter --> SS
+    Presenter --> RS
+    GS -. события GameListener .-> Presenter
 
     Console --> Start
     Console --> Play
@@ -122,6 +141,7 @@ flowchart TB
 
     GS --> PR
     GS --> GR
+    Registry --> PR
     RS --> GR
     SS --> GR
     SS --> PR
@@ -129,6 +149,8 @@ flowchart TB
     PR -. реализация .- Mem
     GR -. реализация .- Mem
 ```
+
+Swing-часть следует MVP: вкладки и доска отображают состояние, `DesktopController` переводит действия пользователя в вызовы сервисов, а сервисы и предметная модель отвечают за правила игры. Контроллер получает изменения партии через `GameListener`; консольный интерфейс использует те же сервисы. Ни Swing-компоненты, ни консольные экраны не хранят правила Фанороны.
 
 ### Предметная модель
 
@@ -244,6 +266,29 @@ classDiagram
     direction TB
 
     namespace UI {
+        class SwingApplication
+        class GameTab
+        class PlayersTab
+        class ReplayTab
+        class BoardPanel {
+            +showBoard(board: Board, stones: Map)
+        }
+        class DesktopController {
+            +registerPlayer(name: String) Player
+            +startGame(whiteName: String, blackName: String)
+            +clickBoard(point: Point) BoardClickResult
+            +chooseAction(kind: ActionKind) BoardClickResult
+            +boardState() BoardState
+            +loadReplay(game: Game)
+            +replayNext() Boolean
+            +replayBack() Boolean
+        }
+        class BoardState
+        class BoardClickResult {
+            <<interface>>
+        }
+        class ReplayState
+        class PlayerSummary
         class StartScreen
         class GameScreen {
             +onGameChanged(game: Game)
@@ -289,6 +334,10 @@ classDiagram
             +findPlayer(name: String) Player?
             +statisticsFor(player: Player) PlayerStatistics
             +gamesOf(player: Player) List~Game~
+        }
+        class PlayerRegistryService {
+            +register(name: String) Player
+            +players() List~Player~
         }
         class PlayerStatistics {
             <<data>>
@@ -439,6 +488,21 @@ classDiagram
     }
 
     %% UI -> Services
+    SwingApplication *-- GameTab
+    SwingApplication *-- PlayersTab
+    SwingApplication *-- ReplayTab
+    SwingApplication --> DesktopController
+    GameTab *-- BoardPanel
+    ReplayTab *-- BoardPanel
+    DesktopController ..> IGameService
+    DesktopController ..> StatisticsService
+    DesktopController ..> ReplayService
+    DesktopController ..> PlayerRegistryService
+    DesktopController ..> GameSetupFactory
+    DesktopController ..> BoardState
+    DesktopController ..> BoardClickResult
+    DesktopController ..> ReplayState
+    DesktopController ..> PlayerSummary
     StartScreen ..> IGameService
     GameScreen ..> IGameService
     GameListener <|.. GameScreen
@@ -465,6 +529,7 @@ classDiagram
     StatisticsService ..> GameRepository
     StatisticsService ..> PlayerRepository
     StatisticsService ..> PlayerStatistics
+    PlayerRegistryService ..> PlayerRepository
 
     %% Repositories
     PlayerRepository <|.. InMemoryPlayerRepository
@@ -506,15 +571,20 @@ classDiagram
 
 ## Запуск
 
-Требуется JDK 24; Gradle скачивается через wrapper. Точка входа — `src/main/kotlin/Main.kt`.
+Требуется JDK 24; Gradle скачивается через wrapper. Точка входа — `src/main/kotlin/Main.kt`. GUI реализован стандартными Swing/AWT без отдельной библиотеки интерфейса.
 
 ```bash
-./gradlew run                 # интерактивная игра
-./gradlew build               # сборка, тесты и проверка покрытия методов
-./gradlew jacocoTestReport    # отчёт о покрытии в build/reports/jacoco/test/html/
+./gradlew run                       # графический интерфейс
+./gradlew run --args='--console'    # консольный интерфейс
+./gradlew build                     # сборка, тесты и проверка покрытия методов
+./gradlew jacocoTestReport          # отчёт в build/reports/jacoco/test/html/
 ```
 
-После запуска введите `help` для списка команд. Координаты — `x,y`, где `x` от 0 до 8, `y` от 0 до 4. Имена с пробелами заключайте в кавычки.
+В GUI откройте вкладку **Игроки**, зарегистрируйте двух игроков, затем на вкладке **Партия** назначьте белых и чёрных и начните игру. Щёлкните по подсвеченному камню, затем по доступной точке. При выборе перемещения с двумя видами захвата появится диалог выбора. Кнопка **Завершить ход** доступна во время серии захватов; отменённая партия не попадает в историю. Во вкладке **Игроки** отображаются победы, поражения, ничьи и история выбранного игрока; из истории можно открыть повтор и переходить по ходам.
+
+Для запуска тестов в среде Linux без графического сеанса используйте `xvfb-run -a ./gradlew build`. CI запускает сборку таким же способом.
+
+В консольном режиме введите `help` для списка команд. Координаты — `x,y`, где `x` от 0 до 8, `y` от 0 до 4. Имена с пробелами заключайте в кавычки.
 
 ```text
 start "Анна Иванова" Борис
@@ -532,9 +602,10 @@ quit
 
 ## Архитектурные решения
 
-- Игрок создаётся при `GameService.startGame`: имя очищается от пробелов по краям и повторяющихся пробелов, поиск выполняется без учёта регистра. Уже известный игрок используется повторно. Это соответствует жизненному циклу игрока в приложении: отдельной операции регистрации нет, а имена считаются уникальными.
+- `PlayerRegistryService` регистрирует игрока до начала партии в GUI: имя очищается от пробелов по краям и повторяющихся пробелов; одинаковые имена без учёта регистра запрещены. Консольный `GameService.startGame` по-прежнему создаёт неизвестных игроков автоматически, сохраняя прежний способ работы.
+- `DesktopController` изолирует Swing от игровой логики: формирует состояние доски, сопоставляет клики с допустимыми действиями из `IGameService`, разрешает неоднозначный выбор атаки и отступления и управляет повтором. Swing-компоненты обновляются в потоке событий AWT.
 - `Game` хранит копию начальной расстановки вместе с текущей. Поэтому `ReplayService` воспроизводит и обычные, и заданные через `PositionFactory` стартовые позиции.
 - `OwnStoneRule` и `CaptureRemovesStoneRule` явно проверяют принадлежность камня текущей стороне и фактическое снятие камней захватом. Это делает проверку действий полной до изменения расстановки.
 - `StatisticsService` использует оба репозитория: игроков — для поиска и согласования имени, партий — для истории и статистики. В `IGameService` добавлена отмена незавершённой партии; отменённые партии в историю не попадают.
 
-Репозитории хранят данные только в памяти текущего запуска. База данных и графический интерфейс в этой версии отсутствуют.
+Репозитории хранят игроков и завершённые партии только в памяти текущего запуска. Статистика вычисляется по истории партий; после закрытия приложения реестр и история очищаются. База данных в этой версии не используется.
