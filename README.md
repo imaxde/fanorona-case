@@ -2,7 +2,7 @@
 
 Настольная игра в Фанорону на Kotlin/JVM с графическим интерфейсом Swing. Приложение проверяет ходы, ведёт реестр игроков, показывает локальную статистику и позволяет повторять завершённые партии. Консольный режим также доступен.
 
-В GUI можно выбрать камень и соседнюю точку мышью. Доступные камни и цели подсвечиваются; если возможны и атака, и отступление, приложение предлагает выбрать вид захвата. Имена игроков, история и статистика существуют в памяти текущего запуска.
+В GUI можно выбрать камень и соседнюю точку мышью. Доступные камни и цели подсвечиваются; если возможны и атака, и отступление, приложение предлагает выбрать вид захвата. Реестр игроков, завершённые партии и статистика сохраняются в локальной базе SQLite и доступны после повторного запуска.
 
 ## Требования
 
@@ -106,8 +106,11 @@ flowchart TB
         GR[GameRepository]
     end
 
-    subgraph INFRA["6 · Хранение в памяти"]
-        Mem[InMemory…Repository]
+    subgraph INFRA["6 · Реализации хранения"]
+        Db["SqliteDatabase и схема SQL"]
+        Sqlite["SqlitePlayerRepository, SqliteGameRepository"]
+        Codec[GameArchiveCodec]
+        Mem["InMemory…Repository (тесты)"]
     end
 
     Window --> Tabs
@@ -148,9 +151,13 @@ flowchart TB
 
     PR -. реализация .- Mem
     GR -. реализация .- Mem
+    PR -. реализация .- Sqlite
+    GR -. реализация .- Sqlite
+    Sqlite --> Db
+    Sqlite --> Codec
 ```
 
-Swing-часть следует MVP: вкладки и доска отображают состояние, `DesktopController` переводит действия пользователя в вызовы сервисов, а сервисы и предметная модель отвечают за правила игры. Контроллер получает изменения партии через `GameListener`; консольный интерфейс использует те же сервисы. Ни Swing-компоненты, ни консольные экраны не хранят правила Фанороны.
+Swing-часть следует MVP: вкладки и доска отображают состояние, `DesktopController` переводит действия пользователя в вызовы сервисов, а сервисы и предметная модель отвечают за правила игры. Контроллер получает изменения партии через `GameListener`; консольный интерфейс использует те же сервисы. `AppServices` собирает оба интерфейса с репозиториями SQLite. Ни Swing-компоненты, ни консольные экраны не хранят правила Фанороны или SQL-запросы.
 
 ### Предметная модель
 
@@ -265,6 +272,10 @@ classDiagram
 classDiagram
     direction TB
 
+    namespace Bootstrap {
+        class AppServices
+    }
+
     namespace UI {
         class SwingApplication
         class GameTab
@@ -339,13 +350,6 @@ classDiagram
             +register(name: String) Player
             +players() List~Player~
         }
-        class PlayerStatistics {
-            <<data>>
-            +wins: Int
-            +losses: Int
-            +games: Int
-            +/draws: Int
-        }
     }
 
     namespace Repositories {
@@ -361,9 +365,26 @@ classDiagram
             +findById(id: Long) Game?
             +findByPlayer(player: Player) List~Game~
             +findMoves(gameId: Long) List~Move~
+            +statisticsFor(player: Player) PlayerStatistics
         }
         class InMemoryPlayerRepository
         class InMemoryGameRepository
+    }
+
+    namespace Persistence {
+        class SqliteDatabase {
+            +connection: Connection
+            +transaction(block)
+            +close()
+        }
+        class SqlitePlayerRepository
+        class SqliteGameRepository
+        class GameArchiveCodec {
+            +encodePosition(board: Board, arrangement: Arrangement) String
+            +decodePosition(board: Board, text: String) Arrangement
+            +encodeMoves(game: Game) List~StoredMove~
+            +restore(...) Game
+        }
     }
 
     namespace Rules {
@@ -410,6 +431,13 @@ classDiagram
     }
 
     namespace Domain {
+        class PlayerStatistics {
+            <<data>>
+            +wins: Int
+            +losses: Int
+            +games: Int
+            +/draws: Int
+        }
         class Game {
             +id: Long
             +date: LocalDate
@@ -488,6 +516,12 @@ classDiagram
     }
 
     %% UI -> Services
+    AppServices --> SqliteDatabase
+    AppServices --> SqlitePlayerRepository
+    AppServices --> SqliteGameRepository
+    AppServices --> GameService
+    AppServices --> StatisticsService
+    AppServices --> ReplayService
     SwingApplication *-- GameTab
     SwingApplication *-- PlayersTab
     SwingApplication *-- ReplayTab
@@ -534,6 +568,11 @@ classDiagram
     %% Repositories
     PlayerRepository <|.. InMemoryPlayerRepository
     GameRepository <|.. InMemoryGameRepository
+    PlayerRepository <|.. SqlitePlayerRepository
+    GameRepository <|.. SqliteGameRepository
+    SqlitePlayerRepository --> SqliteDatabase
+    SqliteGameRepository --> SqliteDatabase
+    SqliteGameRepository ..> GameArchiveCodec
 
     %% Strategy
     ActionRule <|.. AlongLineToFreeNeighborRule
@@ -569,6 +608,23 @@ classDiagram
     Capture <|-- Withdrawal
 ```
 
+### Хранение данных
+
+Приложение использует SQLite через JDBC. Схема находится в [`src/main/resources/db/schema.sql`](src/main/resources/db/schema.sql) и создаётся при первом запуске. Версия схемы записана в `PRAGMA user_version`; при открытии базы с более новой версией приложение сообщает об ошибке вместо изменения данных.
+
+```mermaid
+erDiagram
+    PLAYERS ||--|| PLAYER_STATS : имеет
+    PLAYERS ||--o{ GAMES : играет_белыми
+    PLAYERS ||--o{ GAMES : играет_чёрными
+    GAMES ||--|{ MOVES : содержит
+    MOVES ||--|{ ACTIONS : содержит
+```
+
+`players` хранит имена и ключи для поиска без учёта регистра. `games` хранит дату, исход, участников, размер доски и начальную расстановку. Таблицы `moves` и `actions` сохраняют порядок ходов, тип каждого действия и координаты; этих данных достаточно для восстановления партии и повтора. `player_stats` хранит число партий, побед и поражений, а число ничьих вычисляется из этих значений. Завершённая партия, все её действия и изменения статистики записываются одной транзакцией. Отменённая партия не записывается.
+
+Оба интерфейса используют один и тот же файл БД. По умолчанию это `$XDG_DATA_HOME/fanorona-case/games.db`, а если `XDG_DATA_HOME` не задан, `~/.local/share/fanorona-case/games.db`. Параметр `--database=ПУТЬ` позволяет выбрать другой файл, например для отдельного набора партий. База данных и временные файлы не входят в репозиторий.
+
 ## Запуск
 
 Требуется JDK 24; Gradle скачивается через wrapper. Точка входа — `src/main/kotlin/Main.kt`. GUI реализован стандартными Swing/AWT без отдельной библиотеки интерфейса.
@@ -576,6 +632,7 @@ classDiagram
 ```bash
 ./gradlew run                       # графический интерфейс
 ./gradlew run --args='--console'    # консольный интерфейс
+./gradlew run --args='--console --database=/tmp/fanorona.db'
 ./gradlew build                     # сборка, тесты и проверка покрытия методов
 ./gradlew jacocoTestReport          # отчёт в build/reports/jacoco/test/html/
 ```
@@ -606,6 +663,6 @@ quit
 - `DesktopController` изолирует Swing от игровой логики: формирует состояние доски, сопоставляет клики с допустимыми действиями из `IGameService`, разрешает неоднозначный выбор атаки и отступления и управляет повтором. Swing-компоненты обновляются в потоке событий AWT.
 - `Game` хранит копию начальной расстановки вместе с текущей. Поэтому `ReplayService` воспроизводит и обычные, и заданные через `PositionFactory` стартовые позиции.
 - `OwnStoneRule` и `CaptureRemovesStoneRule` явно проверяют принадлежность камня текущей стороне и фактическое снятие камней захватом. Это делает проверку действий полной до изменения расстановки.
-- `StatisticsService` использует оба репозитория: игроков — для поиска и согласования имени, партий — для истории и статистики. В `IGameService` добавлена отмена незавершённой партии; отменённые партии в историю не попадают.
+- `StatisticsService` использует репозиторий игроков для поиска и репозиторий партий для истории и статистики. Для SQLite статистика читается из `player_stats`, для тестовой реализации в памяти вычисляется из завершённых партий. В `IGameService` добавлена отмена незавершённой партии; отменённые партии в историю не попадают.
 
-Репозитории хранят игроков и завершённые партии только в памяти текущего запуска. Статистика вычисляется по истории партий; после закрытия приложения реестр и история очищаются. База данных в этой версии не используется.
+`SqliteGameRepository` сохраняет связанные записи атомарно и проверяет целостность восстановленной партии. `GameArchiveCodec` восстанавливает предметную модель из начальной расстановки и последовательности действий, сохраняя возможность повтора после перезапуска. Реализации в памяти остаются для быстрых проверок игровой логики без доступа к БД.

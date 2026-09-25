@@ -5,6 +5,7 @@ import fanorona.domain.Color
 import fanorona.domain.Outcome
 import fanorona.domain.Paika
 import fanorona.domain.Player
+import fanorona.domain.PlayerStatistics
 import fanorona.domain.Point
 import fanorona.repositories.InMemoryGameRepository
 import fanorona.repositories.InMemoryPlayerRepository

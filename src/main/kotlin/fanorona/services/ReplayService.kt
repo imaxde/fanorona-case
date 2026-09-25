@@ -19,7 +19,7 @@ class ReplayService(
         }
         val position = game.initialArrangement.copy()
         val frames = mutableListOf(position.copy())
-        for (move in games.findMoves(gameId)) {
+        for (move in game.moves) {
             for (action in move.actions) action.apply(position, board)
             frames += position.copy()
         }

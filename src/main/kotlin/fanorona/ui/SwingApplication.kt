@@ -4,6 +4,7 @@ import fanorona.domain.Game
 import fanorona.domain.Point
 import java.awt.BorderLayout
 import java.awt.Dimension
+import java.sql.SQLException
 import javax.swing.JFrame
 import javax.swing.JLabel
 import javax.swing.JOptionPane
@@ -61,10 +62,14 @@ class SwingApplication(private val controller: DesktopController) : JFrame("Фа
     }
 
     private fun handleBoardClick(point: Point) {
-        when (val result = controller.clickBoard(point)) {
-            is BoardClickResult.ChooseAction -> chooseCapture(result)
-            is BoardClickResult.Invalid -> showMessage(result.message)
-            BoardClickResult.ActionApplied, BoardClickResult.SelectionChanged -> showMessage("")
+        try {
+            when (val result = controller.clickBoard(point)) {
+                is BoardClickResult.ChooseAction -> chooseCapture(result)
+                is BoardClickResult.Invalid -> showMessage(result.message)
+                BoardClickResult.ActionApplied, BoardClickResult.SelectionChanged -> showMessage("")
+            }
+        } catch (_: SQLException) {
+            showDatabaseError()
         }
     }
 
@@ -119,6 +124,18 @@ class SwingApplication(private val controller: DesktopController) : JFrame("Фа
     } catch (exception: IllegalStateException) {
         showMessage(exception.message ?: "Действие сейчас недоступно")
         false
+    } catch (_: SQLException) {
+        showDatabaseError()
+        false
+    }
+
+    private fun showDatabaseError() {
+        try {
+            refresh()
+        } catch (_: SQLException) {
+            // The current screen remains visible if the database cannot be read.
+        }
+        showMessage("Ошибка базы данных. Проверьте доступность файла и повторите действие.")
     }
 
     private fun showMessage(message: String) {

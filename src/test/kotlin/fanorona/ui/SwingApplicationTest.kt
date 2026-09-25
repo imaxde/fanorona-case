@@ -1,10 +1,13 @@
 package fanorona.ui
 
-import fanorona.domain.Game
+import fanorona.AppServices
 import fanorona.domain.Color
+import fanorona.domain.Game
 import fanorona.domain.Point
+import fanorona.persistence.SqliteDatabase
 import fanorona.repositories.InMemoryGameRepository
 import fanorona.repositories.InMemoryPlayerRepository
+import fanorona.runGui
 import fanorona.services.ActionService
 import fanorona.services.GameService
 import fanorona.services.PlayerRegistryService
@@ -13,23 +16,119 @@ import fanorona.services.StatisticsService
 import fanorona.setup.PositionFactory
 import java.awt.Component
 import java.awt.Container
+import java.awt.Window
 import java.awt.event.MouseEvent
+import java.nio.file.Files
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JDialog
-import javax.swing.JList
 import javax.swing.JLabel
+import javax.swing.JList
 import javax.swing.JOptionPane
 import javax.swing.JTabbedPane
 import javax.swing.JTextField
 import javax.swing.SwingUtilities
-import java.awt.Window
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SwingApplicationTest {
+    @Test
+    fun `database read failure is shown while keeping the window usable`() {
+        val factory = PositionFactory("W.B......\n.........\n.........\n.........\n.........")
+        val database = SqliteDatabase(Files.createTempFile("fanorona-gui-read-error", ".db"))
+        val services = AppServices(database, factory)
+        val controller = DesktopController(
+            services.gameService, services.registry, services.statistics, services.replay, factory,
+        )
+        SwingUtilities.invokeAndWait {
+            val window = SwingApplication(controller).apply { isVisible = true }
+            try {
+                database.close()
+                find<JTextField>(window, "playerNameField").text = "Анна"
+                find<JButton>(window, "registerPlayerButton").doClick()
+                assertTrue(find<JLabel>(window, "statusMessage").text.contains("Ошибка базы данных"))
+                assertTrue(window.isVisible)
+            } finally {
+                window.dispose()
+            }
+        }
+    }
+
+    @Test
+    fun `database write failure is reported without closing the GUI`() {
+        val file = Files.createTempFile("fanorona-gui-write-error", ".db")
+        SqliteDatabase(file).use { database ->
+            database.connection.createStatement().use {
+                it.execute("CREATE TRIGGER fail_action BEFORE INSERT ON actions BEGIN SELECT RAISE(ABORT, 'forced'); END")
+            }
+        }
+        runGui(PositionFactory("W.B......\n.........\n.........\n.........\n........."), file)
+        SwingUtilities.invokeAndWait {
+            val window = Window.getWindows().filterIsInstance<SwingApplication>().single { it.isVisible }
+            try {
+                val name = find<JTextField>(window, "playerNameField")
+                val register = find<JButton>(window, "registerPlayerButton")
+                name.text = "Анна"
+                register.doClick()
+                name.text = "Борис"
+                register.doClick()
+                find<JComboBox<*>>(window, "whitePlayerCombo").selectedItem = "Анна"
+                find<JComboBox<*>>(window, "blackPlayerCombo").selectedItem = "Борис"
+                find<JButton>(window, "startGameButton").doClick()
+                val board = find<BoardPanel>(window, "gameBoard")
+                click(board, Point(0, 0))
+                click(board, Point(1, 0))
+                assertTrue(find<JLabel>(window, "statusMessage").text.contains("Ошибка базы данных"))
+                assertTrue(window.isVisible)
+            } finally {
+                window.dispose()
+            }
+        }
+    }
+
+    @Test
+    fun `GUI restores registered players statistics and replay after restart`() {
+        val file = Files.createTempFile("fanorona-gui-restart", ".db")
+        val factory = PositionFactory("W.B......\n.........\n.........\n.........\n.........")
+        runGui(factory, file)
+        SwingUtilities.invokeAndWait {
+            val first = Window.getWindows().filterIsInstance<SwingApplication>().single { it.isVisible }
+            val name = find<JTextField>(first, "playerNameField")
+            val register = find<JButton>(first, "registerPlayerButton")
+            name.text = "Анна"
+            register.doClick()
+            name.text = "Борис"
+            register.doClick()
+            find<JComboBox<*>>(first, "whitePlayerCombo").selectedItem = "Анна"
+            find<JComboBox<*>>(first, "blackPlayerCombo").selectedItem = "Борис"
+            find<JButton>(first, "startGameButton").doClick()
+            val board = find<BoardPanel>(first, "gameBoard")
+            click(board, Point(0, 0))
+            click(board, Point(1, 0))
+            first.dispose()
+        }
+
+        runGui(factory, file)
+        SwingUtilities.invokeAndWait {
+            val second = Window.getWindows().filterIsInstance<SwingApplication>().single { it.isVisible }
+            try {
+                val players = find<JList<*>>(second, "playerList")
+                assertEquals(2, players.model.size)
+                players.selectedIndex = 0
+                val history = find<JList<Game>>(second, "historyList")
+                assertEquals(1, history.model.size)
+                history.selectedIndex = 0
+                find<JButton>(second, "openReplayButton").doClick()
+                find<JButton>(second, "replayNextButton").doClick()
+                assertFalse(find<JButton>(second, "replayNextButton").isEnabled)
+            } finally {
+                second.dispose()
+            }
+        }
+    }
+
     @Test
     fun `players can finish a game and replay it through Swing controls`() {
         val factory = PositionFactory("W.B......\n.........\n.........\n.........\n.........")

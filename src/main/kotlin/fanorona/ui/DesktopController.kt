@@ -11,7 +11,7 @@ import fanorona.domain.Point
 import fanorona.domain.Withdrawal
 import fanorona.services.IGameService
 import fanorona.services.PlayerRegistryService
-import fanorona.services.PlayerStatistics
+import fanorona.domain.PlayerStatistics
 import fanorona.services.ReplayService
 import fanorona.services.StatisticsService
 import fanorona.setup.GameSetupFactory
