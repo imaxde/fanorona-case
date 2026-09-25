@@ -6,7 +6,7 @@ import fanorona.domain.Game
 import fanorona.domain.Outcome
 import fanorona.domain.Player
 import fanorona.domain.Point
-import fanorona.services.PlayerStatistics
+import fanorona.domain.PlayerStatistics
 
 enum class ActionKind { PAIKA, APPROACH, WITHDRAWAL }
 

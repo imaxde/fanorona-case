@@ -3,6 +3,8 @@ package fanorona.repositories
 import fanorona.domain.Game
 import fanorona.domain.Move
 import fanorona.domain.Player
+import fanorona.domain.PlayerStatistics
+import fanorona.domain.Outcome
 
 class InMemoryGameRepository : GameRepository {
     private val games = linkedMapOf<Long, Game>()
@@ -25,4 +27,17 @@ class InMemoryGameRepository : GameRepository {
     }
 
     override fun findMoves(gameId: Long): List<Move> = games[gameId]?.moves ?: emptyList()
+
+    override fun statisticsFor(player: Player): PlayerStatistics {
+        val played = findByPlayer(player)
+        val wins = played.count {
+            (it.whitePlayer == player && it.outcome == Outcome.WHITE_WIN) ||
+                (it.blackPlayer == player && it.outcome == Outcome.BLACK_WIN)
+        }
+        val losses = played.count {
+            (it.whitePlayer == player && it.outcome == Outcome.BLACK_WIN) ||
+                (it.blackPlayer == player && it.outcome == Outcome.WHITE_WIN)
+        }
+        return PlayerStatistics(wins, losses, played.size)
+    }
 }

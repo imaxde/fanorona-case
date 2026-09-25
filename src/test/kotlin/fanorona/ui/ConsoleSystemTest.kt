@@ -5,14 +5,17 @@ import fanorona.domain.Board
 import fanorona.domain.Color
 import fanorona.domain.Point
 import fanorona.domain.Stone
-import fanorona.runConsole
 import fanorona.main
+import fanorona.persistence.SqliteDatabase
+import fanorona.runConsole
 import fanorona.setup.ClassicFanoronaFactory
 import fanorona.setup.PositionFactory
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -88,7 +91,8 @@ class ConsoleSystemTest {
             System.setIn(ByteArrayInputStream("help\nquit\n".toByteArray(StandardCharsets.UTF_8)))
             System.setOut(PrintStream(bytes, true, StandardCharsets.UTF_8))
 
-            main(arrayOf("--console"))
+            val file = Files.createTempFile("fanorona-main-console", ".db")
+            main(arrayOf("--console", "--database=$file"))
 
             assertContains(bytes.toString(StandardCharsets.UTF_8), "start <белые> <чёрные>")
         } finally {
@@ -97,10 +101,41 @@ class ConsoleSystemTest {
         }
     }
 
-    private fun runScript(factory: fanorona.setup.GameSetupFactory, script: String): String {
+    @Test
+    fun `console retains completed games and statistics after restart`() {
+        val file = Files.createTempFile("fanorona-console-restart", ".db")
+        val factory = fanorona.setup.PositionFactory("W.B......\n.........\n.........\n.........\n.........")
+        val first = runScript(factory, "start Анна Борис\nmove approach 0,0 1,0\nquit\n", file)
+        assertContains(first, "Партия #1")
+
+        val second = runScript(factory, "players\nstats Анна\nhistory Анна\nreplay 1\nnext\nquit\n", file)
+        assertContains(second, "Анна: партий: 1, победы: 1")
+        assertContains(second, "Партия #1")
+        assertContains(second, "Следующий ход. Шаг 1")
+    }
+
+    @Test
+    fun `console reports database write failure and keeps accepting commands`() {
+        val file = Files.createTempFile("fanorona-console-write-error", ".db")
+        SqliteDatabase(file).use { database ->
+            database.connection.createStatement().use {
+                it.execute("CREATE TRIGGER fail_action BEFORE INSERT ON actions BEGIN SELECT RAISE(ABORT, 'forced'); END")
+            }
+        }
+        val factory = PositionFactory("W.B......\n.........\n.........\n.........\n.........")
+        val output = runScript(factory, "start Анна Борис\nmove approach 0,0 1,0\nplayers\nquit\n", file)
+        assertContains(output, "Ошибка базы данных")
+        assertContains(output, "Борис")
+    }
+
+    private fun runScript(
+        factory: fanorona.setup.GameSetupFactory,
+        script: String,
+        file: Path = Files.createTempFile("fanorona-console-test", ".db"),
+    ): String {
         val bytes = ByteArrayOutputStream()
         val output = PrintStream(bytes, true, StandardCharsets.UTF_8)
-        runConsole(factory, ByteArrayInputStream(script.toByteArray(StandardCharsets.UTF_8)), output)
+        runConsole(factory, ByteArrayInputStream(script.toByteArray(StandardCharsets.UTF_8)), output, file)
         return bytes.toString(StandardCharsets.UTF_8)
     }
 }

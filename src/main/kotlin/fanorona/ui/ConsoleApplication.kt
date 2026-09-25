@@ -7,6 +7,7 @@ import fanorona.setup.GameSetupFactory
 import java.io.InputStream
 import java.io.PrintStream
 import java.nio.charset.StandardCharsets
+import java.sql.SQLException
 
 class ConsoleApplication(
     games: IGameService,
@@ -54,6 +55,8 @@ class ConsoleApplication(
                 output.println("Ошибка: ${exception.message}")
             } catch (exception: IllegalStateException) {
                 output.println("Ошибка: ${exception.message}")
+            } catch (exception: SQLException) {
+                output.println("Ошибка базы данных: ${exception.message}")
             }
         }
     }

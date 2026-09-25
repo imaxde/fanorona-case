@@ -90,4 +90,12 @@ class Game(
             else -> null
         }
     }
+
+    internal fun restoreOutcome(saved: Outcome) {
+        check(pendingMove == null && completedMoves.isNotEmpty()) { "Cannot restore an unfinished game" }
+        require(outcome == saved || (outcome == null && saved == Outcome.DRAW)) {
+            "Saved result does not match the moves"
+        }
+        outcome = saved
+    }
 }
